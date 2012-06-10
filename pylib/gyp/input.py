@@ -2165,7 +2165,7 @@ def ValidateSourcesInTarget(target, target_dict, build_file):
     print ('static library %s has several files with the same basename:\n' %
            target + error + 'Some build systems, e.g. MSVC08, '
            'cannot handle that.')
-    raise KeyError, 'Duplicate basenames in sources section, see list above'
+    print ('Duplicate basenames in sources section, see list above')
 
 
 def ValidateRulesInTarget(target, target_dict, extra_sources_for_rules):
