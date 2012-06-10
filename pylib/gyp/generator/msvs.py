@@ -1776,6 +1776,12 @@ def GenerateOutput(target_list, target_dicts, data, params):
   # GeneratorCalculatedVariables.
   msvs_version = params['msvs_version']
 
+  for val in target_dicts.itervalues():
+    if val.get('duplicate_basename', False):
+      if msvs_version.short_name == "2008":
+        raise KeyError, 'Duplicate basenames not supported under VS 2008'
+
+
   generator_flags = params.get('generator_flags', {})
 
   # Optionally shard targets marked with 'msvs_shard': SHARD_COUNT.
