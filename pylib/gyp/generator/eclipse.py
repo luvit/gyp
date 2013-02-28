@@ -17,6 +17,7 @@ still result in a few indexer issues here and there.
 This generator has no automated tests, so expect it to be broken.
 """
 
+from xml.sax.saxutils import escape
 import os.path
 import subprocess
 import gyp
@@ -36,14 +37,15 @@ for unused in ['RULE_INPUT_PATH', 'RULE_INPUT_ROOT', 'RULE_INPUT_NAME',
                'RULE_INPUT_DIRNAME', 'RULE_INPUT_EXT',
                'EXECUTABLE_PREFIX', 'EXECUTABLE_SUFFIX',
                'STATIC_LIB_PREFIX', 'STATIC_LIB_SUFFIX',
-               'SHARED_LIB_PREFIX', 'SHARED_LIB_SUFFIX']:
+               'SHARED_LIB_PREFIX', 'SHARED_LIB_SUFFIX',
+               'CONFIGURATION_NAME']:
   generator_default_variables[unused] = ''
 
-# Include dirs will occasionaly use the SHARED_INTERMEDIATE_DIR variable as
+# Include dirs will occasionally use the SHARED_INTERMEDIATE_DIR variable as
 # part of the path when dealing with generated headers.  This value will be
 # replaced dynamically for each configuration.
 generator_default_variables['SHARED_INTERMEDIATE_DIR'] = \
-    '$SHARED_INTERMEDIATES_DIR'
+    '$SHARED_INTERMEDIATE_DIR'
 
 
 def CalculateVariables(default_variables, params):
@@ -63,7 +65,7 @@ def CalculateGeneratorInputInfo(params):
 
 
 def GetAllIncludeDirectories(target_list, target_dicts,
-                             shared_intermediates_dir, config_name):
+                             shared_intermediate_dirs, config_name):
   """Calculate the set of include directories to be used.
 
   Returns:
@@ -94,17 +96,18 @@ def GetAllIncludeDirectories(target_list, target_dicts,
       # Find standard gyp include dirs.
       if config.has_key('include_dirs'):
         include_dirs = config['include_dirs']
-        for include_dir in include_dirs:
-          include_dir = include_dir.replace('$SHARED_INTERMEDIATES_DIR',
-                                            shared_intermediates_dir)
-          if not os.path.isabs(include_dir):
-            base_dir = os.path.dirname(target_name)
+        for shared_intermediate_dir in shared_intermediate_dirs:
+          for include_dir in include_dirs:
+            include_dir = include_dir.replace('$SHARED_INTERMEDIATE_DIR',
+                                              shared_intermediate_dir)
+            if not os.path.isabs(include_dir):
+              base_dir = os.path.dirname(target_name)
 
-            include_dir = base_dir + '/' + include_dir
-            include_dir = os.path.abspath(include_dir)
+              include_dir = base_dir + '/' + include_dir
+              include_dir = os.path.abspath(include_dir)
 
-          if not include_dir in gyp_includes_set:
-            gyp_includes_set.add(include_dir)
+            if not include_dir in gyp_includes_set:
+              gyp_includes_set.add(include_dir)
 
 
   # Generate a list that has all the include dirs.
@@ -216,7 +219,7 @@ def WriteMacros(out, eclipse_langs, defines):
     out.write('    <language name="%s">\n' % lang)
     for key in sorted(defines.iterkeys()):
       out.write('      <macro><name>%s</name><value>%s</value></macro>\n' %
-                (key, defines[key]))
+                (escape(key), escape(defines[key])))
     out.write('    </language>\n')
   out.write('  </section>\n')
 
@@ -232,7 +235,10 @@ def GenerateOutputForConfig(target_list, target_dicts, data, params,
                            config_name)
 
   toplevel_build = os.path.join(options.toplevel_dir, build_dir)
-  shared_intermediate_dir = os.path.join(toplevel_build, 'obj', 'gen')
+  # Ninja uses out/Debug/gen while make uses out/Debug/obj/gen as the
+  # SHARED_INTERMEDIATE_DIR. Include both possible locations.
+  shared_intermediate_dirs = [os.path.join(toplevel_build, 'obj', 'gen'),
+                              os.path.join(toplevel_build, 'gen')]
 
   if not os.path.exists(toplevel_build):
     os.makedirs(toplevel_build)
@@ -244,7 +250,7 @@ def GenerateOutputForConfig(target_list, target_dicts, data, params,
   eclipse_langs = ['C++ Source File', 'C Source File', 'Assembly Source File',
                    'GNU C++', 'GNU C', 'Assembly']
   include_dirs = GetAllIncludeDirectories(target_list, target_dicts,
-                                          shared_intermediate_dir, config_name)
+                                          shared_intermediate_dirs, config_name)
   WriteIncludePaths(out, eclipse_langs, include_dirs)
   defines = GetAllDefines(target_list, target_dicts, data, config_name)
   WriteMacros(out, eclipse_langs, defines)

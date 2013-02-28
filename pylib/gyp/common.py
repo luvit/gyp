@@ -27,6 +27,13 @@ class memoize(object):
       return result
 
 
+class GypError(Exception):
+  """Error class representing an error, which is to be presented
+  to the user.  The main entry point will catch and display this.
+  """
+  pass
+
+
 def ExceptionAppend(e, msg):
   """Append a message to the given exception's message."""
   if not e.args:
@@ -95,6 +102,15 @@ def BuildFile(fully_qualified_target):
   return ParseQualifiedTarget(fully_qualified_target)[0]
 
 
+def GetEnvironFallback(var_list, default):
+  """Look up a key in the environment, with fallback to secondary keys
+  and finally falling back to a default value."""
+  for var in var_list:
+    if var in os.environ:
+      return os.environ[var]
+  return default
+
+
 def QualifiedTarget(build_file, target, toolset):
   # "Qualified" means the file that a target was defined in and the target
   # name, separated by a colon, suffixed by a # and the toolset name:
@@ -111,9 +127,9 @@ def RelativePath(path, relative_to):
   # directory, returns a relative path that identifies path relative to
   # relative_to.
 
-  # Convert to absolute (and therefore normalized paths).
-  path = os.path.abspath(path)
-  relative_to = os.path.abspath(relative_to)
+  # Convert to normalized (and therefore absolute paths).
+  path = os.path.realpath(path)
+  relative_to = os.path.realpath(relative_to)
 
   # Split the paths into components.
   path_split = path.split(os.path.sep)
@@ -133,6 +149,20 @@ def RelativePath(path, relative_to):
 
   # Turn it back into a string and we're done.
   return os.path.join(*relative_split)
+
+
+@memoize
+def InvertRelativePath(path, toplevel_dir=None):
+  """Given a path like foo/bar that is relative to toplevel_dir, return
+  the inverse relative path back to the toplevel_dir.
+
+  E.g. os.path.normpath(os.path.join(path, InvertRelativePath(path)))
+  should always produce the empty string, unless the path contains symlinks.
+  """
+  if not path:
+    return path
+  toplevel_dir = '.' if toplevel_dir is None else toplevel_dir
+  return RelativePath(toplevel_dir, os.path.join(toplevel_dir, path))
 
 
 def FixIfRelativePath(path, relative_to):
@@ -352,13 +382,20 @@ def GetFlavor(params):
     'cygwin': 'win',
     'win32': 'win',
     'darwin': 'mac',
-    'sunos5': 'solaris',
-    'freebsd7': 'freebsd',
-    'freebsd8': 'freebsd',
-    'freebsd9': 'freebsd',
   }
-  flavor = flavors.get(sys.platform, 'linux')
-  return params.get('flavor', flavor)
+
+  if 'flavor' in params:
+    return params['flavor']
+  if sys.platform in flavors:
+    return flavors[sys.platform]
+  if sys.platform.startswith('sunos'):
+    return 'solaris'
+  if sys.platform.startswith('freebsd'):
+    return 'freebsd'
+  if sys.platform.startswith('aix'):
+    return 'aix'
+
+  return 'linux'
 
 
 def CopyTool(flavor, out_path):
