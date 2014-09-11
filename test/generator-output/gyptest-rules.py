@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright (c) 2009 Google Inc. All rights reserved.
+# Copyright (c) 2012 Google Inc. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -10,12 +10,14 @@ Verifies --generator-output= behavior when using rules.
 
 import TestGyp
 
-test = TestGyp.TestGyp(formats=['!ninja'])
+# Android doesn't support --generator-output.
+test = TestGyp.TestGyp(formats=['!android'])
 
 test.writable(test.workpath('rules'), False)
 
 test.run_gyp('rules.gyp',
              '--generator-output=' + test.workpath('gypfiles'),
+             '-G', 'xcode_ninja_target_pattern=^pull_in_all_actions$',
              chdir='rules')
 
 test.writable(test.workpath('rules'), True)

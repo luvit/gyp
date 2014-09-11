@@ -4,6 +4,7 @@
 
 from __future__ import with_statement
 
+import collections
 import errno
 import filecmp
 import os.path
@@ -27,6 +28,13 @@ class memoize(object):
       return result
 
 
+class GypError(Exception):
+  """Error class representing an error, which is to be presented
+  to the user.  The main entry point will catch and display this.
+  """
+  pass
+
+
 def ExceptionAppend(e, msg):
   """Append a message to the given exception's message."""
   if not e.args:
@@ -35,6 +43,14 @@ def ExceptionAppend(e, msg):
     e.args = (str(e.args[0]) + ' ' + msg,)
   else:
     e.args = (str(e.args[0]) + ' ' + msg,) + e.args[1:]
+
+
+def FindQualifiedTargets(target, qualified_list):
+  """
+  Given a list of qualified targets, return the qualified targets for the
+  specified |target|.
+  """
+  return [t for t in qualified_list if ParseQualifiedTarget(t)[1] == target]
 
 
 def ParseQualifiedTarget(target):
@@ -95,6 +111,15 @@ def BuildFile(fully_qualified_target):
   return ParseQualifiedTarget(fully_qualified_target)[0]
 
 
+def GetEnvironFallback(var_list, default):
+  """Look up a key in the environment, with fallback to secondary keys
+  and finally falling back to a default value."""
+  for var in var_list:
+    if var in os.environ:
+      return os.environ[var]
+  return default
+
+
 def QualifiedTarget(build_file, target, toolset):
   # "Qualified" means the file that a target was defined in and the target
   # name, separated by a colon, suffixed by a # and the toolset name:
@@ -111,9 +136,16 @@ def RelativePath(path, relative_to):
   # directory, returns a relative path that identifies path relative to
   # relative_to.
 
-  # Convert to absolute (and therefore normalized paths).
-  path = os.path.abspath(path)
-  relative_to = os.path.abspath(relative_to)
+  # Convert to normalized (and therefore absolute paths).
+  path = os.path.realpath(path)
+  relative_to = os.path.realpath(relative_to)
+
+  # On Windows, we can't create a relative path to a different drive, so just
+  # use the absolute path.
+  if sys.platform == 'win32':
+    if (os.path.splitdrive(path)[0].lower() !=
+        os.path.splitdrive(relative_to)[0].lower()):
+      return path
 
   # Split the paths into components.
   path_split = path.split(os.path.sep)
@@ -133,6 +165,20 @@ def RelativePath(path, relative_to):
 
   # Turn it back into a string and we're done.
   return os.path.join(*relative_split)
+
+
+@memoize
+def InvertRelativePath(path, toplevel_dir=None):
+  """Given a path like foo/bar that is relative to toplevel_dir, return
+  the inverse relative path back to the toplevel_dir.
+
+  E.g. os.path.normpath(os.path.join(path, InvertRelativePath(path)))
+  should always produce the empty string, unless the path contains symlinks.
+  """
+  if not path:
+    return path
+  toplevel_dir = '.' if toplevel_dir is None else toplevel_dir
+  return RelativePath(toplevel_dir, os.path.join(toplevel_dir, path))
 
 
 def FixIfRelativePath(path, relative_to):
@@ -346,25 +392,49 @@ def WriteOnDiff(filename):
   return Writer()
 
 
+def EnsureDirExists(path):
+  """Make sure the directory for |path| exists."""
+  try:
+    os.makedirs(os.path.dirname(path))
+  except OSError:
+    pass
+
+
 def GetFlavor(params):
   """Returns |params.flavor| if it's set, the system's default flavor else."""
   flavors = {
     'cygwin': 'win',
     'win32': 'win',
     'darwin': 'mac',
-    'sunos5': 'solaris',
-    'freebsd7': 'freebsd',
-    'freebsd8': 'freebsd',
-    'freebsd9': 'freebsd',
   }
-  flavor = flavors.get(sys.platform, 'linux')
-  return params.get('flavor', flavor)
+
+  if 'flavor' in params:
+    return params['flavor']
+  if sys.platform in flavors:
+    return flavors[sys.platform]
+  if sys.platform.startswith('sunos'):
+    return 'solaris'
+  if sys.platform.startswith('freebsd'):
+    return 'freebsd'
+  if sys.platform.startswith('openbsd'):
+    return 'openbsd'
+  if sys.platform.startswith('aix'):
+    return 'aix'
+
+  return 'linux'
 
 
 def CopyTool(flavor, out_path):
-  """Finds (mac|sun|win)_tool.gyp in the gyp directory and copies it
+  """Finds (flock|mac|win)_tool.gyp in the gyp directory and copies it
   to |out_path|."""
-  prefix = { 'solaris': 'sun', 'mac': 'mac', 'win': 'win' }.get(flavor, None)
+  # aix and solaris just need flock emulation. mac and win use more complicated
+  # support scripts.
+  prefix = {
+      'aix': 'flock',
+      'solaris': 'flock',
+      'mac': 'mac',
+      'win': 'win'
+      }.get(flavor, None)
   if not prefix:
     return
 
@@ -401,6 +471,72 @@ def uniquer(seq, idfun=None):
         seen[marker] = 1
         result.append(item)
     return result
+
+
+# Based on http://code.activestate.com/recipes/576694/.
+class OrderedSet(collections.MutableSet):
+  def __init__(self, iterable=None):
+    self.end = end = []
+    end += [None, end, end]         # sentinel node for doubly linked list
+    self.map = {}                   # key --> [key, prev, next]
+    if iterable is not None:
+      self |= iterable
+
+  def __len__(self):
+    return len(self.map)
+
+  def __contains__(self, key):
+    return key in self.map
+
+  def add(self, key):
+    if key not in self.map:
+      end = self.end
+      curr = end[1]
+      curr[2] = end[1] = self.map[key] = [key, curr, end]
+
+  def discard(self, key):
+    if key in self.map:
+      key, prev_item, next_item = self.map.pop(key)
+      prev_item[2] = next_item
+      next_item[1] = prev_item
+
+  def __iter__(self):
+    end = self.end
+    curr = end[2]
+    while curr is not end:
+      yield curr[0]
+      curr = curr[2]
+
+  def __reversed__(self):
+    end = self.end
+    curr = end[1]
+    while curr is not end:
+      yield curr[0]
+      curr = curr[1]
+
+  # The second argument is an addition that causes a pylint warning.
+  def pop(self, last=True):  # pylint: disable=W0221
+    if not self:
+      raise KeyError('set is empty')
+    key = self.end[1][0] if last else self.end[2][0]
+    self.discard(key)
+    return key
+
+  def __repr__(self):
+    if not self:
+      return '%s()' % (self.__class__.__name__,)
+    return '%s(%r)' % (self.__class__.__name__, list(self))
+
+  def __eq__(self, other):
+    if isinstance(other, OrderedSet):
+      return len(self) == len(other) and list(self) == list(other)
+    return set(self) == set(other)
+
+  # Extensions to the recipe.
+  def update(self, iterable):
+    for i in iterable:
+      if i not in self:
+        self.add(i)
 
 
 class CycleError(Exception):

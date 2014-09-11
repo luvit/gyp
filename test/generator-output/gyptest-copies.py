@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright (c) 2009 Google Inc. All rights reserved.
+# Copyright (c) 2012 Google Inc. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -11,13 +11,14 @@ target of 'all'.
 
 import TestGyp
 
-# Ninja doesn't support --generator-output.
-test = TestGyp.TestGyp(formats=['!ninja'])
+# Android doesn't support --generator-output.
+test = TestGyp.TestGyp(formats=['!android'])
 
 test.writable(test.workpath('copies'), False)
 
 test.run_gyp('copies.gyp',
              '--generator-output=' + test.workpath('gypfiles'),
+             '-G', 'xcode_ninja_target_pattern=^(?!copies_null)',
              chdir='copies')
 
 test.writable(test.workpath('copies'), True)
@@ -39,7 +40,7 @@ test.must_match(['relocate', 'copies', 'copies-out', 'file1'],
 
 if test.format == 'xcode':
   chdir = 'relocate/copies/build'
-elif test.format == 'make':
+elif test.format in ['make', 'ninja', 'xcode-ninja', 'cmake']:
   chdir = 'relocate/gypfiles/out'
 else:
   chdir = 'relocate/gypfiles'
@@ -50,7 +51,7 @@ test.must_match(['relocate', 'copies', 'subdir', 'copies-out', 'file3'],
 
 if test.format == 'xcode':
   chdir = 'relocate/copies/subdir/build'
-elif test.format == 'make':
+elif test.format in ['make', 'ninja', 'xcode-ninja', 'cmake']:
   chdir = 'relocate/gypfiles/out'
 else:
   chdir = 'relocate/gypfiles'
